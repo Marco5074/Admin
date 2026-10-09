@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seguridad en BD: práctica</title>
+<style>
+  :root { --fondo:#eef1f6; --tinta:#1b2433; --ok:#1f8a5b; --mal:#c8433b; --acento:#f0a500; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--fondo); color:var(--tinta); font:16px/1.5 Verdana, sans-serif; }
+  header { background:var(--tinta); padding:10px 12px; position:sticky; top:0; z-index:2; }
+  .fila-tema { display:flex; align-items:center; gap:10px; }
+  #modos { display:flex; gap:6px; margin-top:8px; }
+  #modos button { flex:1; font:inherit; font-size:.9rem; padding:8px; border:2px solid #9fb0cc; background:transparent; color:#fff; border-radius:8px; cursor:pointer; }
+  #modos button[aria-selected="true"] { background:var(--acento); color:var(--tinta); border-color:var(--acento); font-weight:bold; }
+  #modos button:focus-visible { outline:3px solid var(--acento); outline-offset:2px; }
+  .fila-tema label { color:#fff; font-size:.9rem; white-space:nowrap; }
+  #menu { flex:1; min-width:0; font:inherit; padding:10px; border:2px solid #fff; border-radius:8px; background:#000; color:#fff; font-weight:bold; color-scheme:dark; }
+  #menu option { background:#000; color:#fff; }
+  #menu:focus-visible { outline:3px solid #fff; outline-offset:2px; }
+  main { max-width:660px; margin:0 auto; padding:18px 16px; }
+  #progreso { opacity:.7; margin:0 0 8px; }
+  .barra { height:8px; background:#cfd6e3; border-radius:4px; margin-bottom:14px; }
+  .barra div { height:100%; width:0; background:var(--ok); border-radius:4px; transition:width .3s; }
+  .tarjeta { background:#fff; border:2px solid var(--tinta); border-radius:10px; padding:18px; }
+  #tema { font-size:.85rem; font-weight:bold; color:#6a5200; background:var(--acento); display:inline-block; padding:1px 10px; border-radius:10px; }
+  #pregunta { font-size:1.15rem; font-weight:bold; margin:10px 0 0; }
+  #def { margin:10px 0 0; padding:10px 12px; background:#f3f5fa; border-left:6px solid var(--tinta); border-radius:6px; white-space:pre-wrap; }
+  #opciones { display:grid; gap:8px; margin-top:14px; }
+  #opciones button { font:inherit; text-align:left; padding:10px 12px; border:2px solid var(--tinta); background:#fff; color:var(--tinta); border-radius:8px; cursor:pointer; }
+  #opciones button:hover:not(:disabled) { background:#f3f5fa; }
+  #opciones button.ok { background:#dff3e9; border-color:var(--ok); font-weight:bold; }
+  #opciones button.mal { background:#f9e0de; border-color:var(--mal); }
+  textarea { width:100%; height:120px; margin-top:14px; padding:10px; font:inherit; border:2px solid var(--tinta); border-radius:8px; resize:vertical; }
+  textarea.corta { height:52px; }
+  .fila { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  .fila button { font:inherit; padding:10px 16px; border:2px solid var(--tinta); background:#fff; color:var(--tinta); border-radius:8px; cursor:pointer; }
+  .fila button.principal { background:var(--tinta); color:#fff; flex:1; }
+  button:focus-visible, textarea:focus-visible { outline:3px solid var(--acento); outline-offset:2px; }
+  #msg { margin-top:14px; padding:10px 12px; border-radius:8px; display:none; white-space:pre-wrap; }
+  #msg.ok { display:block; background:#dff3e9; border-left:6px solid var(--ok); }
+  #msg.mal { display:block; background:#f9e0de; border-left:6px solid var(--mal); }
+  #msg.info { display:block; background:#fff3d1; border-left:6px solid var(--acento); }
+</style>
+</head>
+<body>
+<header>
+  <div class="fila-tema">
+    <label for="menu">Tema:</label>
+    <select id="menu" aria-label="Elegir tema"></select>
+  </div>
+  <div id="modos" role="tablist">
+    <button id="m-preg" role="tab" aria-selected="true">Preguntas (escribir)</button>
+    <button id="m-mem" role="tab" aria-selected="false">Memoria (elige el concepto)</button>
+  </div>
+</header>
+<main>
+  <p id="progreso"></p>
+  <div class="barra"><div id="avance"></div></div>
+  <section class="tarjeta">
+    <span id="tema"></span>
+    <p id="pregunta"></p>
+    <div id="def" hidden></div>
+    <div id="opciones" hidden></div>
+    <textarea id="respuesta" aria-label="Tu respuesta" placeholder="Escribe aquí..."></textarea>
+    <div class="fila">
+      <button id="comprobar" class="principal">Comprobar</button>
+      <button id="pista">Pista</button>
+      <button id="ver">Ver respuesta</button>
+    </div>
+    <div id="msg" role="status"></div>
+  </section>
+</main>
+
+<script>
+/* Cada concepto: [nombre, [otros nombres válidos], definición, [ideas clave]].
+   Una idea clave = "palabra1|palabra2" (basta escribir UNA de ellas).
+   Modo Preguntas: se pide explicar el concepto; se acepta con el 60 % de ideas clave.
+   Modo Memoria: se muestra la definición y debes escribir el nombre del concepto. */
+const TEMAS = [
+{ n:"Privilegios", e:[
+["Privilegio", ["privilegios","permiso"], "Permiso específico que un usuario o rol recibe para realizar acciones en el servidor, la base de datos o un objeto. Es la base del control de acceso en un DBMS.", ["permiso","usuario|rol","servidor|base de datos|objeto","control de acceso"]],
+["Privilegios de servidor", ["server-level","server level","nivel servidor"], "Afectan a toda la instancia y se otorgan a logins. Ejemplos: ALTER ANY LOGIN (crear o modificar logins), CREATE DATABASE, VIEW ANY DATABASE y CONTROL SERVER (control total sobre el servidor, similar a sysadmin).", ["instancia|servidor","login","control server","create database|alter any login|view any database"]],
+["Privilegios de base de datos", ["database-level","database level","nivel base de datos"], "Aplican a una base de datos en particular y se otorgan a usuarios y roles de esa base. Ejemplos: CONTROL DATABASE (control total sobre la base), ALTER DATABASE, ALTER ANY USER (administrar usuarios), CREATE TABLE y BACKUP DATABASE / BACKUP LOG.", ["base de datos|particular","control database","alter any user|backup|create table","usuario|rol"]],
+["Privilegios de objeto", ["object-level","object level","nivel objeto"], "Aplican a un objeto (tabla, vista, procedimiento o función) sin afectar a otros. Ejemplos: SELECT, INSERT, UPDATE, DELETE, EXECUTE, REFERENCES, ALTER y CONTROL (control total sobre el objeto).", ["objeto|tabla","select","insert|update|delete","execute|references|control"]],
+["GRANT", [], "Comando que otorga privilegios a usuarios o roles. Ejemplo: GRANT SELECT, UPDATE ON dbo.Clientes TO Usuario1;", ["otorga|concede|da","privilegio|permiso","usuario|rol"]],
+["REVOKE", [], "Comando que quita un privilegio otorgado, pero no bloquea los privilegios basados en roles: si el usuario lo recibe por otro rol, lo conserva. Ejemplo: REVOKE UPDATE ON dbo.Clientes FROM Usuario1;", ["quita|elimina|retira","privilegio|permiso","otro rol|rol","conserva|no bloquea|mantiene"]],
+["DENY", [], "Comando que niega explícitamente un privilegio y lo impide siempre, incluso si el usuario lo recibe a través de otro rol o grupo. Es el primero en la jerarquía (DENY, REVOKE, GRANT). Ejemplo: DENY DELETE ON dbo.Clientes TO Usuario1;", ["niega|impide|bloquea","siempre|explicit","rol|grupo","jerarquia|primero"]],
+["Privilegios directos", ["directos","privilegio directo"], "Los asignados al usuario explícitamente, por ejemplo con GRANT SELECT TO Usuario1.", ["usuario","explicit","grant"]],
+["Privilegios heredados", ["heredados","privilegio heredado"], "Los recibidos por pertenecer a un rol (Usuario1 ∈ rol_ventas). Ejemplo en SQL Server: si un usuario pertenece a db_datareader puede leer todas las tablas aunque no tenga GRANT directo.", ["rol","pertenec","db_datareader|leer todas|sin grant"]],
+]},
+{ n:"Roles", e:[
+["Rol", ["roles","perfil de seguridad"], "Mecanismo que permite agrupar privilegios para asignarlos de forma más sencilla y segura. Funciona como «contenedor» de permisos reutilizable por múltiples usuarios; es un perfil de seguridad que define lo que un conjunto de usuarios puede o no hacer dentro de una base de datos.", ["agrupar|contenedor","privilegio|permiso","reutiliz|multiples|varios usuarios|conjunto de usuarios","perfil de seguridad|sencilla|segura"]],
+["Beneficios de los roles", ["beneficios","ventajas de los roles"], "Gestión centralizada (simplifica el control de privilegios de usuario), reducción de errores en la asignación de permisos y principio de privilegios mínimos (asignar solo los permisos necesarios).", ["centraliz","error","minimo|necesarios"]],
+["db_owner", [], "Control total sobre la base de datos: crear, modificar y eliminar cualquier objeto y ejecutar backups/restauraciones. Para administradores de la base o cuando se necesita gestión completa de la base sin ser sysadmin de todo el servidor.", ["control total","crear|eliminar|objeto","backup|restaur","sysadmin|administrador"]],
+["db_securityadmin", [], "Administra roles y miembros de roles, y concede/revoca permisos a nivel de base. Para encargados de seguridad de la información: manejan accesos pero no modifican datos.", ["roles|miembros","conceder|revocar|permisos","seguridad","no modifica|acceso"]],
+["db_accessadmin", [], "Agrega o quita usuarios en la base. Para DBAs o personal de soporte que administran accesos, pero no objetos.", ["agrega|quita|usuarios","base","acceso|soporte","no objetos|dba"]],
+["db_backupoperator", [], "Realiza copias de seguridad de la base. Permite delegar backups (personal de operaciones o respaldo) sin dar control total sobre la base.", ["copias de seguridad|backup|respaldo","delegar|sin control total|sin dar control"]],
+["db_ddladmin", [], "Ejecuta comandos DDL (CREATE, ALTER, DROP) y puede modificar cualquier esquema u objeto. Para desarrolladores que crean/modifican estructuras; no recomendable en producción sin control estricto.", ["ddl|create|alter|drop","esquema|objeto|estructura","desarrollador","produccion|control estricto"]],
+["db_datareader", [], "Consulta (SELECT) todas las tablas y vistas de la base. Lectura global, sin permisos de escritura: analistas de datos, BI y usuarios de reportes.", ["select|consulta|leer","todas las tablas|vistas","sin escritura|no escrib|solo lectura","analista|bi|reporte"]],
+["db_datawriter", [], "INSERT, UPDATE y DELETE en todas las tablas y vistas. Para operadores que mantienen datos o personal que gestiona operaciones en tablas (por ejemplo, ventas).", ["insert","update","delete","todas las tablas|vistas|operador"]],
+["db_denydatareader", [], "Niega permisos de lectura (impide SELECT). Sirve para restringir usuarios que no deben acceder a datos, aunque tengan otros privilegios.", ["niega|impide","lectura|select","aunque|otros privilegios|restringir"]],
+["db_denydatawriter", [], "Niega permisos de escritura (INSERT, UPDATE, DELETE). Para usuarios que pueden conectarse pero no deben alterar datos.", ["niega|impide","escritura|insert|update|delete","conectarse|solo lectura|no deben alterar"]],
+["Rol personalizado", ["roles personalizados","custom role"], "Rol creado por el administrador: se crea con CREATE ROLE rol_reportes; se le dan permisos con GRANT SELECT ON dbo.Ventas TO rol_reportes; y se le asignan usuarios con ALTER ROLE rol_reportes ADD MEMBER usuarioBD;", ["create role","grant","alter role|add member","usuario"]],
+]},
+{ n:"Usuarios y autenticación", e:[
+["Autenticación de Windows", ["windows authentication","modo de autenticacion de windows"], "Usa las credenciales del sistema operativo (usuario de Windows o de dominio). Es más segura porque delega el control de contraseñas a Windows (caducidad, complejidad) y no pide usuario/contraseña adicionales al conectarse desde la misma sesión.", ["credenciales|sistema operativo|windows","dominio|usuario de windows","mas segura|delega|contrasena","no requiere|no pide|sin usuario"]],
+["Autenticación mixta", ["modo mixto","autenticacion mixta (sql server y windows)","sql server and windows authentication mode"], "Permite usar cuentas de Windows y cuentas de SQL Server. Los logins se gestionan dentro de SQL Server (el DBA define usuario y contraseña) y es el modo más usado en entornos corporativos por su flexibilidad. En modo mixto se define la contraseña del usuario sa.", ["windows","sql server","logins|usuario y contrasena|dba","flexib|corporativ","sa"]],
+["Habilitar autenticación mixta después de instalar", ["habilitar autenticacion mixta","pasos para habilitar autenticacion mixta"], "En SSMS: clic derecho en el servidor → Propiedades; ir a la pestaña Seguridad; seleccionar «SQL Server and Windows Authentication mode»; reiniciar el servicio de SQL Server.", ["ssms|clic derecho","propiedades","seguridad","reiniciar"]],
+["Login", ["logins"], "Credencial de acceso al servidor de bases de datos: contiene el nombre de usuario y el mecanismo de autenticación (Windows o SQL Server). Permite la conexión al motor, pero no garantiza acceso a ninguna base de datos en particular. Ejemplo: CREATE LOGIN appUser WITH PASSWORD = '...', CHECK_POLICY = ON, CHECK_EXPIRATION = ON;", ["credencial|acceso","servidor","autenticacion|windows|sql server","no garantiza|ninguna base|motor"]],
+["Usuario", ["usuarios","usuario de base de datos"], "Identidad dentro de una base de datos específica; es quien recibe permisos sobre tablas, vistas, procedimientos, etc. Está vinculado a un login (excepto los usuarios contenidos). Ejemplo: CREATE USER appUserDB FOR LOGIN appUser;", ["identidad","base de datos","login","permisos|tablas|vistas"]],
+["Usuario sa", ["sa","system administrator"], "System Administrator: cuenta cuya contraseña se define en la instalación en modo mixto. Debe deshabilitarse o renombrarse, salvo que sea estrictamente necesaria.", ["system administrator|administrador","mixto|instalacion|contrasena","deshabilitar|renombrar"]],
+["Buenas prácticas en la gestión de usuarios", ["buenas practicas"], "Credenciales únicas (un login por persona o aplicación, sin compartir), usar roles y perfiles, deshabilitar o renombrar sa, preferir autenticación de Windows, mínimos privilegios, auditar accesos y revisar cuentas inactivas, políticas de contraseñas (complejidad y caducidad) y habilitar mixta solo si hay aplicaciones externas o accesos fuera del dominio.", ["unica|compartir|por persona","roles|perfiles","sa","windows","minimo","audit","contrasena|complejidad|caducidad"]],
+]},
+{ n:"Bases autocontenidas", e:[
+["Base de datos autocontenida", ["base autocontenida","contained database","base contenida"], "Minimiza las dependencias externas con el servidor y puede moverse entre instancias de SQL Server con menos problemas, porque incluye la información de configuración necesaria (usuarios, collation parcial, metadatos, etc.).", ["minimiza|dependencias","servidor","mover|instancias|portab","usuarios|collation|metadatos|configuracion"]],
+["Usuario contenido", ["usuarios contenidos","contained user"], "Usuario que existe dentro de la base y no depende de logins del servidor. Ejemplo: CREATE USER Ana WITH PASSWORD = 'Ana2025!';", ["dentro de la base|existe","no depende|sin login|logins","password|contrasena"]],
+["Modo de contención NONE", ["none","containment none"], "Valor por defecto: la base depende del servidor (logins, configuraciones).", ["defecto","depende del servidor|servidor","logins|configuraciones"]],
+["Modo de contención PARTIAL", ["partial","containment partial"], "Habilita el uso de usuarios contenidos, pero aún hay dependencias con el servidor (por ejemplo, jobs, linked servers). En la práctica «autocontenida» significa parcial, porque no todas las dependencias se eliminan. Ejemplo: ALTER DATABASE Biblioteca SET CONTAINMENT = PARTIAL;", ["usuarios contenidos","dependencias","jobs|linked servers","parcial|no todas"]],
+["Pasos para usar una base contenida", ["pasos para crear un usuario contenido","ejemplo de uso de base contenida"], "1) Habilitar la autenticación autocontenida en el servidor: EXEC sp_configure 'contained database authentication', 1; RECONFIGURE; 2) Configurar la base con CONTAINMENT = PARTIAL; 3) Crear el usuario contenido dentro de la base con CREATE USER ... WITH PASSWORD.", ["sp_configure|habilitar","reconfigure|servidor","containment|partial|configurar la base","create user|with password|usuario contenido"]],
+["Usuarios huérfanos", ["logins huerfanos","login huerfano","usuario huerfano"], "Riesgo de las bases normales al moverlas entre servidores: sus usuarios dependen de logins, por lo que hay que recrear logins y sincronizar SIDs. Las bases autocontenidas evitan este problema.", ["mover|servidor","logins|login","sid|recrear|sincroniz","autocontenida|evita"]],
+["Ventajas y desventajas de las bases autocontenidas", ["ventajas y desventajas"], "Ventajas: portabilidad (más fácil mover bases entre servidores), aislamiento (cada base con sus usuarios y configuraciones) y evita logins huérfanos. Desventajas: complejidad en la seguridad (los usuarios contenidos no se centralizan), aún requieren dependencias externas y no siempre se recomiendan en entornos grandes con administración centralizada.", ["portabilidad","aislamiento","huerfano","complejidad|no se centraliz","dependencias","entornos grandes|centralizada"]],
+]},
+{ n:"Políticas y auditoría", e:[
+["Políticas de login", ["check_policy","check_expiration","perfiles en sql server"], "En SQL Server no existen perfiles como en Oracle: se usan políticas de login con CHECK_POLICY = ON (aplica las reglas de Windows) y CHECK_EXPIRATION = ON (caducidad de la contraseña).", ["no existen perfiles|oracle","check_policy|reglas de windows","check_expiration|caducidad"]],
+["Política de seguridad local de Windows", ["active directory","politica de seguridad local"], "Lugar donde se configura la política de contraseñas (longitud mínima, caducidad en días, etc.), no en SQL Server. Si el servidor está en dominio, se configura en Active Directory; SQL Server simplemente hereda esas reglas.", ["no se configura en sql server|windows","active directory|dominio","hereda"]],
+["SQL Audit", ["sql server audit","auditoria"], "Mecanismo nativo de SQL Server para registrar actividades y accesos, con fines de seguridad, cumplimiento y control. Sus componentes principales son Server Audit y Database Audit Specification.", ["nativo","registrar|actividades|accesos","seguridad|cumplimiento|control","server audit|database audit"]],
+["Server Audit", [], "Componente de SQL Audit con alcance de auditoría centralizado; define el destino de los registros. Ejemplo: CREATE SERVER AUDIT AuditoriaBasica TO FILE (...) y se activa con ALTER SERVER AUDIT ... WITH (STATE = ON);", ["alcance centralizado|centralizad","destino","registros|archivo|file","state = on|activa"]],
+["Database Audit Specification", ["especificacion de auditoria de base de datos"], "Componente de SQL Audit con alcance específico: define las acciones a auditar en una base (por ejemplo, SELECT, INSERT, DELETE ON dbo.Empleados BY PUBLIC). Una base solo puede tener una activa.", ["alcance especifico|especific","acciones a auditar|acciones","base de datos","una activa|solo una|1"]],
+["Niveles de auditoría", ["niveles de sql audit"], "Servidor (logins, roles, backups, cambios de configuración), base de datos (DML/DDL sobre tablas, vistas, procedimientos) y columna (solo UPDATE, por ejemplo sobre el campo Salario).", ["servidor|logins","base de datos|dml|ddl","columna","update|salario"]],
+["Destinos de la auditoría", ["destinos de sql audit","destinos"], "Archivos (.sqlaudit), consultables con T-SQL o SSMS; Application Log de Windows y Security Log de Windows, integrados con Event Viewer.", ["archivo|sqlaudit","application log","security log","event viewer"]],
+["sys.fn_get_audit_file", ["fn_get_audit_file"], "Función de T-SQL para consultar los registros de auditoría guardados en archivo. También se pueden ver en SSMS (Object Explorer → Security → Audits → View Audit Logs) o en el Event Viewer de Windows.", ["t-sql|funcion|consultar","registros|auditoria","ssms|view audit logs","event viewer"]],
+["Limitaciones de SQL Audit", ["limitaciones"], "SELECT solo se audita a nivel de tabla (no de columna); UPDATE sí puede ser por columna; una base solo puede tener 1 Database Audit Specification activa; y puede generar sobrecarga en el rendimiento del servidor.", ["select|tabla","update|columna","una|1|especificacion","rendimiento|sobrecarga"]],
+["Casos de uso de SQL Audit", ["casos de uso","usos de sql audit"], "Cumplimiento normativo (SOX, HIPAA, PCI-DSS), control de acceso a datos (tablas de clientes, sueldos, tarjetas), detección de actividades sospechosas (inicios de sesión fallidos, cambios de permisos) y auditoría de cambios de seguridad (creación de roles, cambios de privilegios).", ["cumplimiento|sox|hipaa|pci","control de acceso|clientes|sueldos","sospechosa|fallid","roles|privilegios|cambios de seguridad"]],
+]},
+];
+
+const $ = (s) => document.querySelector(s);
+const barajar = (l) => [...l].sort(() => Math.random() - 0.5);
+const limpiar = (t) => t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+const solo = (t) => limpiar(t).replace(/[^a-z0-9]/g, "");
+const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const acertadas = (texto, claves) => claves.filter((c) => c.split("|").some((a) => texto.includes(limpiar(a))));
+
+let ti = 0, modo = "preg", resuelta = false;
+const ESTADOS = {};
+
+function estado() {
+  const k = ti + modo;
+  return ESTADOS[k] ||= { cola: barajar(TEMAS[ti].e.map((_, i) => i)), dom: 0, int: 0, fin: false };
+}
+const actual = () => TEMAS[ti].e[estado().cola[0]];
+// En modo memoria se tapa el nombre del concepto si aparece dentro de la definición.
+function tapar(item) {
+  let d = item[2];
+  [item[0], ...item[1]].filter((x) => x.length > 2).forEach((x) => { d = d.replace(new RegExp(esc(x), "gi"), "____"); });
+  return d;
+}
+function aviso(texto, tipo) { const m = $("#msg"); m.className = tipo; m.textContent = texto; }
+function pintarProgreso() {
+  const st = estado(), total = TEMAS[ti].e.length;
+  $("#progreso").textContent = `Dominadas ${st.dom} de ${total}. Intentos: ${st.int}`;
+  $("#avance").style.width = `${(st.dom / total) * 100}%`;
+}
+
+function distractores(item) {
+  const pal = (s) => limpiar(s).split(/[^a-z0-9]+/).filter(Boolean);
+  const sim = (a, b) => {
+    const A = pal(a), B = pal(b), x = solo(a), y = solo(b);
+    let i = 0; while (i < x.length && i < y.length && x[i] === y[i]) i++;
+    return A.filter((w) => B.includes(w)).length * 2 + i / 4 + Math.random();
+  };
+  return TEMAS[ti].e.filter((o) => o !== item).sort((a, b) => sim(item[0], b[0]) - sim(item[0], a[0])).slice(0, 3);
+}
+
+function mostrar() {
+  const st = estado(), area = $("#respuesta"), mem = modo === "mem";
+  resuelta = false;
+  pintarProgreso();
+  $("#msg").className = "";
+  $("#comprobar").textContent = "Comprobar";
+  area.value = ""; area.disabled = false; area.className = "";
+  area.placeholder = "Explica con el mayor detalle posible...";
+  area.hidden = mem; $("#pista").hidden = mem; $("#ver").hidden = mem; $("#comprobar").hidden = mem;
+  $("#opciones").hidden = true; $("#opciones").innerHTML = "";
+  $("#tema").textContent = TEMAS[ti].n;
+  if (st.cola.length === 0) {
+    st.fin = true; resuelta = true;
+    $("#def").hidden = true;
+    $("#pregunta").textContent = `¡Listo! Dominaste los ${TEMAS[ti].e.length} conceptos de este tema con ${st.int} intentos.`;
+    $("#comprobar").textContent = "Empezar de nuevo"; $("#comprobar").hidden = false;
+    area.disabled = true;
+    return;
+  }
+  const item = actual();
+  if (!mem) {
+    $("#def").hidden = true;
+    $("#pregunta").textContent = `Explica con detalle: ${item[0]}`;
+    area.focus();
+    return;
+  }
+  $("#pregunta").textContent = "¿A qué concepto corresponde esta definición?";
+  $("#def").hidden = false; $("#def").textContent = tapar(item);
+  $("#opciones").hidden = false;
+  barajar([item, ...distractores(item)]).forEach((o) => {
+    const b = document.createElement("button");
+    b.textContent = o[0]; b.onclick = () => elegir(b, o);
+    $("#opciones").appendChild(b);
+  });
+}
+
+function elegir(btn, opcion) {
+  if (resuelta) return;
+  const st = estado(), item = actual(), ok = opcion === item;
+  st.int++;
+  [...$("#opciones").children].forEach((b) => {
+    b.disabled = true;
+    if (b.textContent === item[0]) b.classList.add("ok");
+  });
+  if (ok) {
+    st.cola.shift(); st.dom++;
+    aviso(`Correcto: ${item[0]}.\n${item[2]}`, "ok");
+  } else {
+    btn.classList.add("mal");
+    st.cola.push(st.cola.shift());
+    aviso(`Incorrecto. Era: ${item[0]}.\n${item[2]}\n(esta tarjeta volverá a salir)`, "mal");
+  }
+  $("#comprobar").hidden = false;
+  terminar();
+}
+
+function terminar() {
+  resuelta = true;
+  $("#respuesta").disabled = true;
+  $("#comprobar").textContent = "Siguiente";
+  $("#comprobar").focus();
+  pintarProgreso();
+}
+
+function comprobar() {
+  const st = estado();
+  if (resuelta) {
+    if (st.fin) { delete ESTADOS[ti + modo]; }
+    return mostrar();
+  }
+  const bruto = $("#respuesta").value.trim();
+  if (!bruto) return aviso("Escribe algo primero.", "info");
+  const item = actual();
+  st.int++;
+  if (modo === "preg") {
+    const claves = item[3], aciertos = acertadas(limpiar(bruto), claves);
+    if (aciertos.length >= Math.ceil(claves.length * 0.6)) {
+      aviso(`Correcto. Definición completa:\n${item[2]}`, "ok");
+      st.cola.shift(); st.dom++; terminar();
+    } else {
+      aviso(`Todavía no: tienes ${aciertos.length} de ${claves.length} ideas clave. Sé más específico y escribe de nuevo.`, "mal");
+      $("#respuesta").focus(); pintarProgreso();
+    }
+  } else {
+    const ok = [item[0], ...item[1]].some((x) => solo(x) === solo(bruto));
+    if (ok) {
+      aviso(`Correcto: ${item[0]}.\n${item[2]}`, "ok");
+      st.cola.shift(); st.dom++; terminar();
+    } else {
+      aviso("Incorrecto. Intenta de nuevo.", "mal");
+      $("#respuesta").value = ""; $("#respuesta").focus(); pintarProgreso();
+    }
+  }
+}
+
+function verRespuesta() {
+  if (resuelta) return;
+  const st = estado(), item = actual();
+  aviso(modo === "preg" ? `Respuesta: ${item[2]}\n(esta tarjeta volverá a salir)` : `Era: ${item[0]}\n${item[2]}\n(esta tarjeta volverá a salir)`, "info");
+  st.cola.push(st.cola.shift());
+  terminar();
+}
+
+function pista() {
+  if (resuelta) return;
+  const item = actual();
+  if (modo === "mem") {
+    const palabras = item[0].split(" ").length;
+    return aviso(`Pista: empieza con «${item[0].slice(0, 2)}» y tiene ${palabras} palabra${palabras > 1 ? "s" : ""}.`, "info");
+  }
+  const texto = limpiar($("#respuesta").value);
+  const faltan = item[3].filter((c) => !c.split("|").some((a) => texto.includes(limpiar(a))));
+  aviso(faltan.length ? `Pista: te falta mencionar algo relacionado con «${faltan[0].split("|")[0]}».` : "Ya tienes todas las ideas, pulsa Comprobar.", "info");
+}
+
+function pintarNav() {
+  const menu = $("#menu");
+  menu.innerHTML = "";
+  TEMAS.forEach((t, i) => {
+    const o = document.createElement("option");
+    o.value = i; o.textContent = t.n; o.selected = i === ti;
+    menu.appendChild(o);
+  });
+  $("#m-preg").setAttribute("aria-selected", modo === "preg");
+  $("#m-mem").setAttribute("aria-selected", modo === "mem");
+}
+$("#menu").addEventListener("change", (e) => { ti = Number(e.target.value); mostrar(); });
+$("#m-preg").onclick = () => { modo = "preg"; pintarNav(); mostrar(); };
+$("#m-mem").onclick = () => { modo = "mem"; pintarNav(); mostrar(); };
+$("#comprobar").addEventListener("click", comprobar);
+$("#ver").addEventListener("click", verRespuesta);
+$("#pista").addEventListener("click", pista);
+$("#respuesta").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); comprobar(); }
+});
+pintarNav();
+mostrar();
+</script>
+</body>
+</html>
